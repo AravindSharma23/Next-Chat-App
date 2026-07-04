@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+
+:root {
+  --bg-main: #050816;
+  --bg-card: rgba(255, 255, 255, 0.08);
+  --border-soft: rgba(255, 255, 255, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(124, 58, 237, 0.35), transparent 35%),
+    radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.24), transparent 35%),
+    #050816;
+  color: white;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(22px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+.neon-border {
+  border: 1px solid rgba(139, 92, 246, 0.45);
+  box-shadow: 0 0 30px rgba(139, 92, 246, 0.22);
+}
+
+.gradient-text {
+  background: linear-gradient(90deg, #a78bfa, #22d3ee, #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.scroll-soft::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scroll-soft::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
