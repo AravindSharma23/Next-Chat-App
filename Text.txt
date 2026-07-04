@@ -1,0 +1,314 @@
+import { NextRequest, NextResponse } from "next/server";
+import { connectDB } from "@/lib/db";
+import User from "@/models/User";
+
+export async function GET(req: NextRequest) {
+  try {
+    await connectDB();
+
+    const currentUserId = req.nextUrl.searchParams.get("currentUserId");
+    const search = req.nextUrl.searchParams.get("search") || "";
+
+    const query: any = {};
+
+    if (currentUserId) {
+      query._id = { $ne: currentUserId };
+    }
+
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const users = await User.find(query)
+      .select("_id name email avatar birthday isOnline lastSeen")
+      .limit(20)
+      .sort({ createdAt: -1 });
+
+    return NextResponse.json({ users });
+  } catch (error) {
+    return NextResponse.json(
+      { message: "Failed to fetch users", error },
+      { status: 500 }
+    );
+  }
+}
+
+CHECK    http://localhost:3000/api/users?currentUserId=YOUR_USER_ID
+
+app/api/chats/route.ts
+export async function POST(req: NextRequest) {
+  try {
+    await connectDB();
+
+    const { name, isGroup, members, admins } = await req.json();
+
+    if (!members || members.length < 2) {
+      return NextResponse.json(
+        { message: "At least 2 members are required" },
+        { status: 400 }
+      );
+    }
+
+    if (!isGroup) {
+      const existingChat = await Chat.findOne({
+        isGroup: false,
+        members: { $all: members, $size: 2 },
+      })
+        .populate("members", "name email avatar isOnline lastSeen")
+        .populate({
+          path: "lastMessage",
+          populate: {
+            path: "sender",
+            select: "name email avatar",
+          },
+        });
+
+      if (existingChat) {
+        return NextResponse.json({
+          message: "Chat already exists",
+          chat: existingChat,
+        });
+      }
+    }
+
+    const chat = await Chat.create({
+      name: isGroup ? name : "",
+      isGroup,
+      members,
+      admins: admins || [],
+    });
+
+    const populatedChat = await Chat.findById(chat._id).populate(
+      "members",
+      "name email avatar isOnline lastSeen"
+    );
+
+    return NextResponse.json({
+      message: "Chat created",
+      chat: populatedChat,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { message: "Failed to create chat", error },
+      { status: 500 }
+    );
+  }
+}
+
+
+components/ChatList.tsx
+
+"use client";
+
+import { useEffect, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import { RootState, AppDispatch } from "@/redux/store";
+import { setChats, setSelectedChat } from "@/redux/features/chatSlice";
+import { MessageCircle, Search, Plus, X } from "lucide-react";
+import { Chat, User } from "@/types";
+
+export default function ChatList() {
+  const dispatch = useDispatch<AppDispatch>();
+
+  const { user } = useSelector((state: RootState) => state.auth);
+  const { chats, selectedChat } = useSelector((state: RootState) => state.chat);
+
+  const [showNewChat, setShowNewChat] = useState(false);
+  const [users, setUsers] = useState<User[]>([]);
+  const [search, setSearch] = useState("");
+  const [loadingUsers, setLoadingUsers] = useState(false);
+
+  async function loadChats() {
+    if (!user) return;
+
+    const res = await fetch(`/api/chats?userId=${user._id}`);
+    const data = await res.json();
+
+    if (res.ok) {
+      dispatch(setChats(data.chats));
+    }
+  }
+
+  async function loadUsers(value = "") {
+    if (!user) return;
+
+    setLoadingUsers(true);
+
+    const res = await fetch(
+      `/api/users?currentUserId=${user._id}&search=${value}`
+    );
+
+    const data = await res.json();
+
+    if (res.ok) {
+      setUsers(data.users);
+    }
+
+    setLoadingUsers(false);
+  }
+
+  async function createOneToOneChat(selectedUserId: string) {
+    if (!user) return;
+
+    const res = await fetch("/api/chats", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "",
+        isGroup: false,
+        members: [user._id, selectedUserId],
+        admins: [],
+      }),
+    });
+
+    const data = await res.json();
+
+    if (res.ok) {
+      await loadChats();
+      dispatch(setSelectedChat(data.chat));
+      setShowNewChat(false);
+      setSearch("");
+    }
+  }
+
+  useEffect(() => {
+    if (showNewChat) {
+      loadUsers();
+    }
+  }, [showNewChat]);
+
+  return (
+    <div className="relative flex h-full flex-col">
+      <div className="border-b border-white/10 p-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-black">Messages</h2>
+
+          <button
+            onClick={() => setShowNewChat(true)}
+            className="rounded-2xl bg-violet-500 p-2 transition hover:scale-105"
+            title="New chat"
+          >
+            <Plus size={18} />
+          </button>
+        </div>
+
+        <div className="mt-4 flex items-center gap-2 rounded-2xl bg-white/10 px-3 py-2">
+          <Search size={16} className="text-white/40" />
+          <input
+            placeholder="Search conversations..."
+            className="w-full bg-transparent text-sm outline-none placeholder:text-white/40"
+          />
+        </div>
+      </div>
+
+      <div className="scroll-soft flex-1 overflow-y-auto p-3">
+        {chats.length === 0 && (
+          <p className="p-4 text-sm text-white/50">
+            No chats yet. Click + to start a new chat.
+          </p>
+        )}
+
+        {chats.map((chat: Chat) => {
+          const active = selectedChat?._id === chat._id;
+
+          const chatName = chat.isGroup
+            ? chat.name
+            : chat.members
+                ?.filter((member) => member._id !== user?._id)
+                .map((member) => member.name)
+                .join(", ");
+
+          return (
+            <button
+              key={chat._id}
+              onClick={() => dispatch(setSelectedChat(chat))}
+              className={`mb-2 flex w-full items-center gap-3 rounded-3xl p-3 text-left transition ${
+                active ? "bg-violet-500/30" : "hover:bg-white/10"
+              }`}
+            >
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-cyan-400">
+                <MessageCircle size={20} />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <h3 className="truncate font-bold">
+                  {chatName || "Unknown Chat"}
+                </h3>
+
+                <p className="truncate text-xs text-white/50">
+                  {chat.lastMessage?.text || "No messages yet"}
+                </p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {showNewChat && (
+        <div className="absolute inset-0 z-20 bg-black/70 backdrop-blur-md">
+          <div className="flex h-full flex-col p-4">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-xl font-black">New Chat</h3>
+
+              <button
+                onClick={() => setShowNewChat(false)}
+                className="rounded-xl bg-white/10 p-2 hover:bg-white/20"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="mb-4 flex items-center gap-2 rounded-2xl bg-white/10 px-3 py-2">
+              <Search size={16} className="text-white/40" />
+              <input
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  loadUsers(e.target.value);
+                }}
+                placeholder="Search users by name or email..."
+                className="w-full bg-transparent text-sm outline-none placeholder:text-white/40"
+              />
+            </div>
+
+            <div className="scroll-soft flex-1 overflow-y-auto">
+              {loadingUsers && (
+                <p className="p-4 text-sm text-white/50">Loading users...</p>
+              )}
+
+              {!loadingUsers && users.length === 0 && (
+                <p className="p-4 text-sm text-white/50">
+                  No users found. Register another account first.
+                </p>
+              )}
+
+              {users.map((item) => (
+                <button
+                  key={item._id}
+                  onClick={() => createOneToOneChat(item._id)}
+                  className="mb-2 flex w-full items-center gap-3 rounded-3xl p-3 text-left hover:bg-white/10"
+                >
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 to-violet-500 font-bold">
+                    {item.name?.charAt(0)?.toUpperCase()}
+                  </div>
+
+                  <div className="min-w-0">
+                    <h4 className="truncate font-bold">{item.name}</h4>
+                    <p className="truncate text-xs text-white/50">
+                      {item.email}
+                    </p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
